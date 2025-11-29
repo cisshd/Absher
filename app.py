@@ -1,10 +1,13 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, UploadFile, File
+from pydantic import BaseModel
 import pandas as pd
-import uvicorn
+import numpy as np
 
 app = FastAPI()
 
-# Load dataset
+# ----------------------------------------------------
+#  LOAD DATA
+# ----------------------------------------------------
 df = pd.read_csv("synthetic_abshar_events_fixed.csv")
 df['timestamp'] = pd.to_datetime(df['timestamp'])
 
@@ -20,8 +23,17 @@ user_profiles.columns = [
     "lon_mean", "lon_std",
     "login_mean", "login_std"
 ]
-
 user_profiles = user_profiles.replace({0: 1e-6})
+
+# ----------------------------------------------------
+#  MODEL CLASS
+# ----------------------------------------------------
+class Event(BaseModel):
+    user_id: str
+    location_lat: float
+    location_lon: float
+    login_count_day: int
+
 
 def predict_user_event(event):
     uid = event["user_id"]
@@ -56,6 +68,31 @@ def predict_user_event(event):
         }
     }
 
+# ----------------------------------------------------
+#  API ENDPOINT — Single Record
+# ----------------------------------------------------
 @app.post("/predict")
-def predict_api(event: dict):
-    return predict_user_event(event)
+def predict_api(event: Event):
+    return predict_user_event(event.dict())
+
+
+# ----------------------------------------------------
+#  API ENDPOINT — CSV UPLOAD
+# ----------------------------------------------------
+@app.post("/predict_csv")
+async def predict_csv(file: UploadFile = File(...)):
+    # Read CSV into DataFrame
+    df_input = pd.read_csv(file.file)
+
+    # Validate columns
+    required_cols = {"user_id", "location_lat", "location_lon", "login_count_day"}
+    if not required_cols.issubset(set(df_input.columns)):
+        return {"error": "CSV must contain columns: user_id, location_lat, location_lon, login_count_day"}
+
+    results = []
+
+    for _, row in df_input.iterrows():
+        result = predict_user_event(row.to_dict())
+        results.append(result)
+
+    return {"records": results}
